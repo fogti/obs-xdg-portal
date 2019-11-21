@@ -509,7 +509,6 @@ on_select_source_response_received_cb (GDBusConnection *connection,
 
   blog (LOG_DEBUG, "[OBS XDG] Response to select source received");
 
-  g_clear_signal_handler (&call->cancelled_id, xdg->cancellable);
   g_clear_pointer (&call, dbus_call_data_free);
 
   g_variant_get (parameters, "(u@a{sv})", &response, &ret);

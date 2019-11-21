@@ -98,7 +98,7 @@ on_cancelled_cb (GCancellable *cancellable,
 {
   dbus_call_data *call = data;
 
-  blog (LOG_INFO, "Session creation cancelled");
+  blog (LOG_INFO, "[OBS XDG] Screencast session cancelled");
 
   g_dbus_connection_call (call->xdg->connection,
                           "org.freedesktop.portal.Desktop",
@@ -260,7 +260,7 @@ new_appsink_sample_cb (GstAppSink *appsink,
 
     default:
       frame.format = VIDEO_FORMAT_NONE;
-      blog (LOG_ERROR, "Unknown video format: %s", video_info.finfo->name);
+      blog (LOG_ERROR, "[OBS XDG] Unknown video format: %s", video_info.finfo->name);
       break;
     }
 
@@ -287,7 +287,7 @@ bus_watch_cb (GstBus     *bus,
 
     case GST_MESSAGE_ERROR:
       gst_message_parse_error (message, &error, NULL);
-      blog (LOG_ERROR, "[XDG] GStreamer bus error: %s", error->message);
+      blog (LOG_ERROR, "[OBS XDG] GStreamer bus error: %s", error->message);
 
       gst_element_set_state (xdg->gst_element, GST_STATE_NULL);
       obs_source_output_video (xdg->source, NULL);
@@ -318,7 +318,7 @@ play_pipewire_stream (obs_xdg_data *xdg)
   if (error)
     {
       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-        blog (LOG_ERROR, "[xdg] error setting up GStreamer pipeline: %s", error->message);
+        blog (LOG_ERROR, "[OBS XDG] Error setting up GStreamer pipeline: %s", error->message);
       return;
     }
 
@@ -336,7 +336,7 @@ play_pipewire_stream (obs_xdg_data *xdg)
   bus = gst_element_get_bus (xdg->gst_element);
   gst_bus_add_watch (bus, bus_watch_cb, xdg);
 
-  blog (LOG_INFO, "[OBS XDG] Playing monitor screencast…");
+  blog (LOG_INFO, "[OBS XDG] Starting monitor screencast…");
 
   gst_element_set_state (xdg->gst_element, GST_STATE_PLAYING);
 }
@@ -361,7 +361,7 @@ on_pipewire_remote_opened_cb (GObject      *source,
   if (error)
     {
       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-        blog (LOG_ERROR, "[xdg] error retrieving pipewire fd: %s", error->message);
+        blog (LOG_ERROR, "[OBS XDG] Error retrieving pipewire fd: %s", error->message);
       return;
     }
 
@@ -371,7 +371,7 @@ on_pipewire_remote_opened_cb (GObject      *source,
   if (error)
     {
       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-        blog (LOG_ERROR, "[xdg] error retrieving pipewire fd: %s", error->message);
+        blog (LOG_ERROR, "[OBS XDG] Error retrieving pipewire fd: %s", error->message);
       return;
     }
 
@@ -425,7 +425,7 @@ on_start_response_received_cb (GDBusConnection *connection,
 
   if (response != 0)
     {
-      blog (LOG_WARNING, "Failed to start screencast, denied by user");
+      blog (LOG_WARNING, "[OBS XDG] Failed to start screencast, denied or cancelled by user");
       return;
     }
 
@@ -436,7 +436,7 @@ on_start_response_received_cb (GDBusConnection *connection,
 
   g_variant_iter_loop (&iter, "(u@a{sv})", &xdg->pipewire_node, &stream_properties);
 
-  blog (LOG_INFO, "[OBS XDG] Monitor selected, starting screencast");
+  blog (LOG_INFO, "[OBS XDG] Monitor selected, setting up screencast");
 
   open_pipewire_remote (xdg);
 }
@@ -453,7 +453,7 @@ on_started_cb (GObject      *source,
   if (error)
     {
       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-        blog (LOG_ERROR, "[xdg] error selecting screencast source: %s", error->message);
+        blog (LOG_ERROR, "[OBS XDG] Error selecting screencast source: %s", error->message);
       return;
     }
 }
@@ -514,7 +514,7 @@ on_select_source_response_received_cb (GDBusConnection *connection,
 
   if (response != 0)
     {
-      blog (LOG_WARNING, "Failed to select source, denied by user");
+      blog (LOG_WARNING, "[OBS XDG] Failed to select source, denied or cancelled by user");
       return;
     }
 
@@ -533,11 +533,9 @@ on_source_selected_cb (GObject      *source,
   if (error)
     {
       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-        blog (LOG_ERROR, "[xdg] error selecting screencast source: %s", error->message);
+        blog (LOG_ERROR, "[OBS XDG] Error selecting screencast source: %s", error->message);
       return;
     }
-
-  blog (LOG_INFO, "Screencast source selection finished");
 }
 
 static void
@@ -617,11 +615,9 @@ on_session_created_cb (GObject      *source,
   if (error)
     {
       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-        blog (LOG_ERROR, "[xdg] error creating screencast session: %s", error->message);
+        blog (LOG_ERROR, "[OBS XDG] Error creating screencast session: %s", error->message);
       return;
     }
-
-  blog (LOG_INFO, "Session successfully created");
 }
 
 static void
@@ -635,8 +631,6 @@ create_session (obs_xdg_data *xdg)
 
   new_request_path (xdg, &request_path, &request_token);
   new_session_path (xdg, NULL, &session_token);
-
-  blog (LOG_INFO, "Creating session with token '%s'", session_token);
 
   call = subscribe_to_signal (xdg, request_path, on_create_session_response_received_cb);
 

@@ -146,7 +146,9 @@ dbus_call_data_free (dbus_call_data *call)
   if (call->signal_id)
     g_dbus_connection_signal_unsubscribe (call->xdg->connection, call->signal_id);
 
-  g_clear_signal_handler (&call->cancelled_id, call->xdg->cancellable);
+  if (call->cancelled_id > 0)
+    g_signal_handler_disconnect (call->xdg->cancellable, call->cancelled_id);
+
   g_clear_pointer (&call->request_path, g_free);
   g_free (call);
 }

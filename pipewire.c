@@ -59,6 +59,13 @@ struct _obs_pipewire_data
   struct spa_video_info format;
 
   struct pw_buffer *current_pw_buffer;
+
+  struct {
+    bool valid;
+    int x, y;
+    int width, height;
+  } crop;
+
   obs_pw_capture_type capture_type;
   bool negotiated;
 };
@@ -190,12 +197,23 @@ teardown_pipewire (obs_pipewire_data *xdg)
   xdg->negotiated = false;
 }
 
+static inline bool
+has_effective_crop (obs_pipewire_data *xdg)
+{
+  return xdg->crop.valid &&
+         (xdg->crop.x != 0 ||
+          xdg->crop.y != 0 ||
+          xdg->crop.width < xdg->format.info.raw.size.width ||
+          xdg->crop.height < xdg->format.info.raw.size.height);
+}
+
 /* ------------------------------------------------- */
 
 static void
 on_process_cb (void *user_data)
 {
   obs_pipewire_data *xdg = user_data;
+  struct spa_meta_region *region;
   struct spa_buffer *buffer;
   struct pw_buffer *b;
 
@@ -264,6 +282,27 @@ on_process_cb (void *user_data)
                            GS_DYNAMIC);
     }
 
+  /* Video Crop */
+  region = spa_buffer_find_meta_data (buffer, SPA_META_VideoCrop, sizeof (*region));
+  if (region && spa_meta_region_is_valid (region))
+    {
+      blog (LOG_DEBUG, "[pipewire] Crop Region available (%dx%d+%d+%d)",
+            region->region.position.x,
+            region->region.position.y,
+            region->region.size.width,
+            region->region.size.height);
+
+      xdg->crop.x = region->region.position.x;
+      xdg->crop.y = region->region.position.y;
+      xdg->crop.width = region->region.size.width;
+      xdg->crop.height = region->region.size.height;
+      xdg->crop.valid = true;
+    }
+  else
+    {
+      xdg->crop.valid = false;
+    }
+
   obs_leave_graphics ();
 
   /*
@@ -278,6 +317,9 @@ on_param_changed_cb (void                 *user_data,
                      const struct spa_pod *param)
 {
   obs_pipewire_data *xdg = user_data;
+  struct spa_pod_builder pod_builder;
+  const struct spa_pod *params[1];
+  uint8_t params_buffer[1024];
   int result;
 
   if (!param || id != SPA_PARAM_Format)
@@ -309,6 +351,16 @@ on_param_changed_cb (void                 *user_data,
   blog (LOG_DEBUG, "[pipewire]     Framerate: %d/%d",
         xdg->format.info.raw.framerate.num,
         xdg->format.info.raw.framerate.denom);
+
+  /* Video crop */
+  pod_builder = SPA_POD_BUILDER_INIT (params_buffer, sizeof (params_buffer));
+  params[0] = spa_pod_builder_add_object (
+    &pod_builder,
+		SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
+		SPA_PARAM_META_type, SPA_POD_Id (SPA_META_VideoCrop),
+		SPA_PARAM_META_size, SPA_POD_Int (sizeof (struct spa_meta_region)));
+
+  pw_stream_update_params (xdg->stream, params, 1);
 
   xdg->negotiated = true;
   pw_thread_loop_signal (xdg->thread_loop, FALSE);
@@ -852,7 +904,10 @@ obs_pipewire_get_width (obs_pipewire_data *xdg)
   if (!xdg->negotiated)
     return 0;
 
-  return xdg->format.info.raw.size.width;
+  if (xdg->crop.valid)
+    return xdg->crop.width;
+  else
+    return xdg->format.info.raw.size.width;
 }
 
 uint32_t
@@ -861,17 +916,37 @@ obs_pipewire_get_height (obs_pipewire_data *xdg)
   if (!xdg->negotiated)
     return 0;
 
-  return xdg->format.info.raw.size.height;
+  if (xdg->crop.valid)
+    return xdg->crop.height;
+  else
+    return xdg->format.info.raw.size.height;
 }
 
 void
 obs_pipewire_video_render (obs_pipewire_data *xdg,
                            gs_effect_t       *effect)
 {
+  gs_eparam_t *image;
+
   if (!xdg->texture)
     return;
 
-  obs_source_draw (xdg->texture, 0, 0, 0, 0, false);
+  image = gs_effect_get_param_by_name (effect, "image");
+  gs_effect_set_texture (image, xdg->texture);
+
+  if (has_effective_crop (xdg))
+    {
+      gs_draw_sprite_subregion (xdg->texture,
+                                0,
+                                xdg->crop.x,
+                                xdg->crop.y,
+                                xdg->crop.x + xdg->crop.width,
+                                xdg->crop.y + xdg->crop.height);
+    }
+  else
+    {
+      gs_draw_sprite (xdg->texture, 0, 0, 0);
+    }
 
   /* Now that the buffer is consumed, queue it again */
   maybe_queue_buffer (xdg);

@@ -24,8 +24,15 @@
 
 typedef struct _obs_pipewire_data obs_pipewire_data;
 
-void* obs_pipewire_create (obs_data_t   *settings,
-                           obs_source_t *source);
+typedef enum
+{
+  DESKTOP_CAPTURE = 1,
+  WINDOW_CAPTURE = 2,
+} obs_pw_capture_type;
+
+void* obs_pipewire_create (obs_pw_capture_type  capture_type,
+                           obs_data_t          *settings,
+                           obs_source_t        *source);
 
 void obs_pipewire_destroy (obs_pipewire_data *xdg);
 

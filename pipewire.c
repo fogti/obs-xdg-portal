@@ -59,6 +59,7 @@ struct _obs_pipewire_data
   struct spa_video_info format;
 
   struct pw_buffer *current_pw_buffer;
+  obs_pw_capture_type capture_type;
   bool negotiated;
 };
 
@@ -635,7 +636,7 @@ select_source (obs_pipewire_data *xdg)
   call = subscribe_to_signal (xdg, request_path, on_select_source_response_received_cb);
 
   g_variant_builder_init (&builder, G_VARIANT_TYPE_VARDICT);
-  g_variant_builder_add (&builder, "{sv}", "types", g_variant_new_uint32 (3));
+  g_variant_builder_add (&builder, "{sv}", "types", g_variant_new_uint32 (xdg->capture_type));
   g_variant_builder_add (&builder, "{sv}", "multiple", g_variant_new_boolean (FALSE));
   g_variant_builder_add (&builder, "{sv}", "cursor_mode", g_variant_new_uint32 (2));
   g_variant_builder_add (&builder, "{sv}", "handle_token", g_variant_new_string (request_token));
@@ -768,13 +769,15 @@ init_obs_xdg (obs_pipewire_data *xdg)
 /* obs_source_info methods */
 
 void*
-obs_pipewire_create (obs_data_t   *settings,
-                     obs_source_t *source)
+obs_pipewire_create (obs_pw_capture_type  capture_type,
+                     obs_data_t          *settings,
+                     obs_source_t        *source)
 {
   obs_pipewire_data *xdg = g_new0 (obs_pipewire_data, 1);
 
   xdg->source = source;
   xdg->settings = settings;
+  xdg->capture_type = capture_type;
 
   if (!init_obs_xdg (xdg))
     g_clear_pointer (&xdg, g_free);

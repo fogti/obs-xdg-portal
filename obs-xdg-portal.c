@@ -37,7 +37,7 @@ static void *
 obs_xdg_create(obs_data_t   *settings,
                obs_source_t *source)
 {
-  return obs_pipewire_create (settings, source);
+  return obs_pipewire_create (DESKTOP_CAPTURE, settings, source);
 }
 
 static void

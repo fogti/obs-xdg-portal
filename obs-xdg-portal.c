@@ -24,9 +24,12 @@
 #include <obs/obs-module.h>
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
-#include <gst/gst.h>
-#include <gst/app/app.h>
-#include <gst/video/video.h>
+
+#include <fcntl.h>
+#include <pipewire/pipewire.h>
+#include <spa/param/video/format-utils.h>
+#include <spa/debug/types.h>
+#include <spa/param/video/type-info.h>
 
 #define REQUEST_PATH "/org/freedesktop/portal/desktop/request/%s/obs%u"
 #define SESSION_PATH "/org/freedesktop/portal/desktop/session/%s/obs%u"
@@ -44,10 +47,23 @@ typedef struct
   uint32_t         pipewire_node;
   int              pipewire_fd;
 
-  GstElement      *gst_element;
+  obs_source_t    *source;
+  obs_data_t      *settings;
 
-        obs_source_t *source;
-        obs_data_t *settings;
+  gs_texture_t *texture;
+
+  struct pw_thread_loop *thread_loop;
+  struct pw_context *context;
+
+  struct pw_core *core;
+  struct spa_hook core_listener;
+
+  struct pw_stream *stream;
+  struct spa_hook stream_listener;
+  struct spa_video_info format;
+
+  struct pw_buffer *current_pw_buffer;
+  bool negotiated;
 } obs_xdg_data;
 
 /* auxiliary methods */
@@ -153,194 +169,265 @@ dbus_call_data_free (dbus_call_data *call)
   g_free (call);
 }
 
+static void
+maybe_queue_buffer (obs_xdg_data *xdg)
+{
+  if (xdg->current_pw_buffer)
+    {
+      pw_stream_queue_buffer (xdg->stream, xdg->current_pw_buffer);
+      xdg->current_pw_buffer = NULL;
+    }
+}
+
+static void
+teardown_pipewire (obs_xdg_data *xdg)
+{
+  maybe_queue_buffer (xdg);
+
+  if (xdg->thread_loop)
+    pw_thread_loop_stop (xdg->thread_loop);
+
+  g_clear_pointer (&xdg->stream, pw_stream_destroy);
+  g_clear_pointer (&xdg->thread_loop, pw_thread_loop_destroy);
+
+  xdg->negotiated = false;
+}
+
 /* ------------------------------------------------- */
 
-static GstFlowReturn
-new_appsink_sample_cb (GstAppSink *appsink,
-                       gpointer    user_data)
+static void
+on_process_cb (void *user_data)
 {
-  struct obs_source_frame frame;
-  enum video_colorspace colorspace = VIDEO_CS_DEFAULT;
-  enum video_range_type range = VIDEO_RANGE_DEFAULT;
-  g_autoptr (GstSample) sample = NULL;
   obs_xdg_data *xdg = user_data;
-  GstVideoInfo video_info;
-  GstMapInfo info;
-  GstBuffer *buffer;
-  GstCaps *caps;
+  struct spa_buffer *buffer;
+  struct pw_buffer *b;
 
-  sample = gst_app_sink_pull_sample (appsink);
-  buffer = gst_sample_get_buffer (sample);
-  caps = gst_sample_get_caps (sample);
-
-  gst_buffer_ref (buffer);
-
-  gst_video_info_from_caps (&video_info, caps);
-  gst_buffer_map (buffer, &info, GST_MAP_READ);
-
-  frame = (struct obs_source_frame) {
-    .width = video_info.width,
-    .height = video_info.height,
-    .linesize[0] = video_info.stride[0],
-    .linesize[1] = video_info.stride[1],
-    .linesize[2] = video_info.stride[2],
-    .data[0] = info.data + video_info.offset[0],
-    .data[1] = info.data + video_info.offset[1],
-    .data[2] = info.data + video_info.offset[2],
-    .timestamp = GST_BUFFER_DTS_OR_PTS (buffer),
-  };
-
-  switch (video_info.colorimetry.range)
+  /* Find the most recent buffer */
+  b = NULL;
+  while (true)
     {
-    case GST_VIDEO_COLOR_RANGE_0_255:
-      range = VIDEO_RANGE_FULL;
-      frame.full_range = 1;
-      break;
-
-    case GST_VIDEO_COLOR_RANGE_16_235:
-      range = VIDEO_RANGE_PARTIAL;
-      break;
-
-    default:
-      break;
+      struct pw_buffer *aux = pw_stream_dequeue_buffer (xdg->stream);
+      if (!aux)
+        break;
+      if (b)
+        pw_stream_queue_buffer (xdg->stream, b);
+      b = aux;
     }
 
-  switch (video_info.colorimetry.matrix)
+  if (!b)
     {
-    case GST_VIDEO_COLOR_MATRIX_BT709:
-      colorspace = VIDEO_CS_709;
-      break;
-
-    case GST_VIDEO_COLOR_MATRIX_BT601:
-      colorspace = VIDEO_CS_601;
-      break;
-
-    default:
-      break;
+      blog (LOG_DEBUG, "[pipewire] Out of buffers!");
+      return;
     }
 
-  video_format_get_parameters (colorspace,
-                               range,
-                               frame.color_matrix,
-                               frame.color_range_min,
-                               frame.color_range_max);
+  buffer = b->buffer;
 
-  switch (video_info.finfo->format)
+  obs_enter_graphics ();
+
+  xdg->current_pw_buffer = b;
+
+  g_clear_pointer (&xdg->texture, gs_texture_destroy);
+  if (buffer->datas[0].type == SPA_DATA_DmaBuf)
     {
-    case GST_VIDEO_FORMAT_I420:
-      frame.format = VIDEO_FORMAT_I420;
-      break;
+      uint32_t offsets[1];
+      uint32_t strides[1];
+      int fds[1];
 
-    case GST_VIDEO_FORMAT_NV12:
-      frame.format = VIDEO_FORMAT_NV12;
-      break;
+      blog (LOG_DEBUG, "[pipewire] DMA-BUF info: fd:%ld, stride:%d, offset:%u, size:%dx%d",
+            buffer->datas[0].fd,
+            buffer->datas[0].chunk->stride,
+            buffer->datas[0].chunk->offset,
+            xdg->format.info.raw.size.width,
+            xdg->format.info.raw.size.height);
 
-    case GST_VIDEO_FORMAT_BGRx:
-      frame.format = VIDEO_FORMAT_BGRX;
-      break;
+      fds[0] = buffer->datas[0].fd;
+      offsets[0] = buffer->datas[0].chunk->offset;
+      strides[0] = buffer->datas[0].chunk->stride;
 
-    case GST_VIDEO_FORMAT_BGRA:
-      frame.format = VIDEO_FORMAT_BGRA;
-      break;
+      xdg->texture =
+        gs_texture_create_from_dmabuf (xdg->format.info.raw.size.width,
+                                       xdg->format.info.raw.size.height,
+                                       GS_BGRX,
+                                       1,
+                                       fds,
+                                       strides,
+                                       offsets,
+                                       NULL);
+    }
+  else
+    {
+      blog (LOG_DEBUG, "[pipewire] Buffer has memory texture");
 
-    case GST_VIDEO_FORMAT_RGBx:
-    case GST_VIDEO_FORMAT_RGBA:
-      frame.format = VIDEO_FORMAT_RGBA;
-      break;
-
-    case GST_VIDEO_FORMAT_UYVY:
-      frame.format = VIDEO_FORMAT_UYVY;
-      break;
-
-    case GST_VIDEO_FORMAT_YUY2:
-      frame.format = VIDEO_FORMAT_YUY2;
-      break;
-
-    case GST_VIDEO_FORMAT_YVYU:
-      frame.format = VIDEO_FORMAT_YVYU;
-      break;
-
-    default:
-      frame.format = VIDEO_FORMAT_NONE;
-      blog (LOG_ERROR, "[OBS XDG] Unknown video format: %s", video_info.finfo->name);
-      break;
+      xdg->texture =
+        gs_texture_create (xdg->format.info.raw.size.width,
+                           xdg->format.info.raw.size.height,
+                           GS_BGRX,
+                           1,
+                           (const uint8_t **)&buffer->datas[0].data,
+                           GS_DYNAMIC);
     }
 
-  obs_source_output_video (xdg->source, &frame);
+  obs_leave_graphics ();
 
-  gst_buffer_unmap (buffer, &info);
-
-  return GST_FLOW_OK;
+  /*
+   * Don't immediately queue the buffer now. Instead, wait until the next
+   * call to obs_xdg_portal_render_video() to queue it back.
+   */
 }
 
-static gboolean
-bus_watch_cb (GstBus     *bus,
-              GstMessage *message,
-              gpointer    user_data)
+static void
+on_param_changed_cb (void                 *user_data,
+                     uint32_t              id,
+                     const struct spa_pod *param)
 {
-  g_autoptr (GError) error = NULL;
+  obs_xdg_data *xdg = user_data;
+  int result;
+
+  if (!param || id != SPA_PARAM_Format)
+    return;
+
+  result = spa_format_parse (param,
+                             &xdg->format.media_type,
+                             &xdg->format.media_subtype);
+  if (result < 0)
+    return;
+
+  if (xdg->format.media_type != SPA_MEDIA_TYPE_video ||
+      xdg->format.media_subtype != SPA_MEDIA_SUBTYPE_raw)
+    return;
+
+  spa_format_video_raw_parse (param, &xdg->format.info.raw);
+
+  blog (LOG_DEBUG, "[pipewire] Negotiated format:");
+
+  blog (LOG_DEBUG, "[pipewire]     Format: %d (%s)",
+        xdg->format.info.raw.format,
+        spa_debug_type_find_name(spa_type_video_format,
+                                 xdg->format.info.raw.format));
+
+  blog (LOG_DEBUG, "[pipewire]     Size: %dx%d",
+        xdg->format.info.raw.size.width,
+        xdg->format.info.raw.size.height);
+
+  blog (LOG_DEBUG, "[pipewire]     Framerate: %d/%d",
+        xdg->format.info.raw.framerate.num,
+        xdg->format.info.raw.framerate.denom);
+
+  xdg->negotiated = true;
+  pw_thread_loop_signal (xdg->thread_loop, FALSE);
+}
+
+static const struct pw_stream_events stream_events =
+{
+  PW_VERSION_STREAM_EVENTS,
+  .param_changed = on_param_changed_cb,
+  .process = on_process_cb,
+};
+
+static void
+on_core_error_cb (void       *user_data,
+                  uint32_t    id,
+                  int         seq,
+                  int         res,
+                  const char *message)
+{
   obs_xdg_data *xdg = user_data;
 
-  switch (GST_MESSAGE_TYPE (message))
-    {
-    case GST_MESSAGE_EOS:
-      obs_source_output_video (xdg->source, NULL);
-      break;
+  blog (LOG_ERROR, "[pipewire] Error id:%u seq:%d res:%d (%s): %s",
+        id, seq, res, g_strerror (res), message);
 
-    case GST_MESSAGE_ERROR:
-      gst_message_parse_error (message, &error, NULL);
-      blog (LOG_ERROR, "[OBS XDG] GStreamer bus error: %s", error->message);
-
-      gst_element_set_state (xdg->gst_element, GST_STATE_NULL);
-      obs_source_output_video (xdg->source, NULL);
-      break;
-
-    default:
-      break;
-    }
-
-  return TRUE;
+  pw_thread_loop_signal (xdg->thread_loop, FALSE);
 }
+
+static void
+on_core_done_cb (void     *user_data,
+                 uint32_t  id,
+                 int       seq)
+{
+  obs_xdg_data *xdg = user_data;
+
+  if (id == PW_ID_CORE)
+    pw_thread_loop_signal (xdg->thread_loop, FALSE);
+}
+
+static const struct pw_core_events core_events = {
+  PW_VERSION_CORE_EVENTS,
+  .done = on_core_done_cb,
+  .error = on_core_error_cb,
+};
 
 static void
 play_pipewire_stream (obs_xdg_data *xdg)
 {
-  g_autoptr (GstElement) appsink = NULL;
-  g_autoptr (GError) error = NULL;
-  g_autoptr (GstBus) bus = NULL;
-  g_autofree char *pipeline = NULL;
+  struct spa_pod_builder pod_builder;
+  const struct spa_pod *params[1];
+  uint8_t params_buffer[1024];
 
-  pipeline = g_strdup_printf ("pipewiresrc client-name=obs-studio fd=%d path=%u ! "
-                              "video/x-raw ! "
-                              "appsink max-buffers=2 drop=true sync=false name=appsink",
-                              xdg->pipewire_fd,
-                              xdg->pipewire_node);
+  xdg->thread_loop = pw_thread_loop_new ("PipeWire thread loop", NULL);
+  xdg->context = pw_context_new (pw_thread_loop_get_loop (xdg->thread_loop), NULL, 0);
 
-  xdg->gst_element = gst_parse_launch (pipeline, &error);
-  if (error)
+  if (pw_thread_loop_start (xdg->thread_loop) < 0)
     {
-      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-        blog (LOG_ERROR, "[OBS XDG] Error setting up GStreamer pipeline: %s", error->message);
+      blog (LOG_WARNING, "Error starting threaded mainloop");
       return;
     }
 
-  appsink = gst_bin_get_by_name (GST_BIN (xdg->gst_element), "appsink");
-  gst_app_sink_set_callbacks (GST_APP_SINK (appsink),
-                              &(GstAppSinkCallbacks)
-                                {
-                                  NULL,
-                                  NULL,
-                                  new_appsink_sample_cb,
-                                },
-                              xdg,
-                              NULL);
+  pw_thread_loop_lock (xdg->thread_loop);
 
-  bus = gst_element_get_bus (xdg->gst_element);
-  gst_bus_add_watch (bus, bus_watch_cb, xdg);
+  /* Core */
+  xdg->core = pw_context_connect_fd (xdg->context,
+                                     fcntl (xdg->pipewire_fd, F_DUPFD_CLOEXEC, 3),
+                                     NULL,
+                                     0);
+  if (!xdg->core)
+    {
+      blog (LOG_WARNING, "Error creating PipeWire core: %m");
+      pw_thread_loop_unlock (xdg->thread_loop);
+      return;
+    }
+
+  pw_core_add_listener (xdg->core, &xdg->core_listener, &core_events, xdg);
+
+  /* Stream */
+  xdg->stream = pw_stream_new (xdg->core,
+                               "OBS Studio",
+                               pw_properties_new (PW_KEY_MEDIA_TYPE, "Video",
+                                                  PW_KEY_MEDIA_CATEGORY, "Capture",
+                                                  PW_KEY_MEDIA_ROLE, "Screen",
+                                                  NULL));
+  pw_stream_add_listener (xdg->stream, &xdg->stream_listener, &stream_events, xdg);
+
+  /* Stream parameters */
+  pod_builder = SPA_POD_BUILDER_INIT (params_buffer, sizeof (params_buffer));
+  params[0] = spa_pod_builder_add_object (
+    &pod_builder,
+    SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
+    SPA_FORMAT_mediaType, SPA_POD_Id (SPA_MEDIA_TYPE_video),
+    SPA_FORMAT_mediaSubtype, SPA_POD_Id (SPA_MEDIA_SUBTYPE_raw),
+    SPA_FORMAT_VIDEO_format, SPA_POD_CHOICE_ENUM_Id (5,
+                                                     SPA_VIDEO_FORMAT_RGB,
+                                                     SPA_VIDEO_FORMAT_RGB,
+                                                     SPA_VIDEO_FORMAT_RGBA,
+                                                     SPA_VIDEO_FORMAT_RGBx,
+                                                     SPA_VIDEO_FORMAT_BGRx),
+    SPA_FORMAT_VIDEO_size, SPA_POD_CHOICE_RANGE_Rectangle (&SPA_RECTANGLE (320, 240),
+                                                           &SPA_RECTANGLE (1, 1),
+                                                           &SPA_RECTANGLE (4096, 4096)),
+    SPA_FORMAT_VIDEO_framerate, SPA_POD_CHOICE_RANGE_Fraction (&SPA_FRACTION (60, 1),
+                                                               &SPA_FRACTION (0, 1),
+                                                               &SPA_FRACTION (144, 1)));
+
+  pw_stream_connect (xdg->stream,
+                     PW_DIRECTION_INPUT,
+                     xdg->pipewire_node,
+                     PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS,
+                     params,
+                     1);
 
   blog (LOG_INFO, "[OBS XDG] Starting monitor screencast…");
 
-  gst_element_set_state (xdg->gst_element, GST_STATE_PLAYING);
+  pw_thread_loop_wait (xdg->thread_loop);
+  pw_thread_loop_unlock (xdg->thread_loop);
 }
 
 /* ------------------------------------------------- */
@@ -713,11 +800,7 @@ obs_xdg_destroy(void *data)
   if (!xdg)
     return;
 
-  if (xdg->gst_element)
-    {
-      gst_element_set_state (xdg->gst_element, GST_STATE_NULL);
-      g_clear_object (&xdg->gst_element);
-    }
+  teardown_pipewire (xdg);
 
   if (xdg->session_handle)
     {
@@ -763,8 +846,8 @@ obs_xdg_show (void *data)
 {
   obs_xdg_data *xdg = data;
 
-  if (xdg->gst_element)
-    gst_element_set_state (xdg->gst_element, GST_STATE_PLAYING);
+  if (xdg->stream)
+    pw_stream_set_active (xdg->stream, true);
 }
 
 static void
@@ -772,8 +855,45 @@ obs_xdg_hide (void *data)
 {
   obs_xdg_data *xdg = data;
 
-  if (xdg->gst_element)
-    gst_element_set_state (xdg->gst_element, GST_STATE_PAUSED);
+  if (xdg->stream)
+    pw_stream_set_active (xdg->stream, false);
+}
+
+static uint32_t
+obs_xdg_get_width (void *data)
+{
+  obs_xdg_data *xdg = data;
+
+  if (!xdg->negotiated)
+    return 0;
+
+  return xdg->format.info.raw.size.width;
+}
+
+static uint32_t
+obs_xdg_get_height (void *data)
+{
+  obs_xdg_data *xdg = data;
+
+  if (!xdg->negotiated)
+    return 0;
+
+  return xdg->format.info.raw.size.height;
+}
+
+static void
+obs_xdg_video_render (void        *data,
+                      gs_effect_t *effect)
+{
+  obs_xdg_data *xdg = data;
+
+  if (!xdg->texture)
+    return;
+
+  obs_source_draw (xdg->texture, 0, 0, 0, 0, false);
+
+  /* Now that the buffer is consumed, queue it again */
+  maybe_queue_buffer (xdg);
 }
 
 bool obs_module_load (void)
@@ -781,7 +901,7 @@ bool obs_module_load (void)
   struct obs_source_info info = {
     .id = "obs-xdg-source",
     .type = OBS_SOURCE_TYPE_INPUT,
-    .output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_DO_NOT_DUPLICATE,
+    .output_flags = OBS_SOURCE_VIDEO,
     .get_name = obs_xdg_get_name,
     .create = obs_xdg_create,
     .destroy = obs_xdg_destroy,
@@ -790,11 +910,15 @@ bool obs_module_load (void)
     .update = obs_xdg_update,
     .show = obs_xdg_show,
     .hide = obs_xdg_hide,
+    .get_width = obs_xdg_get_width,
+    .get_height = obs_xdg_get_height,
+    .video_render = obs_xdg_video_render,
+    .icon_type = OBS_ICON_TYPE_DESKTOP_CAPTURE,
   };
 
   obs_register_source(&info);
 
-  gst_init (NULL, NULL);
+  pw_init (NULL, NULL);
 
   return true;
 }

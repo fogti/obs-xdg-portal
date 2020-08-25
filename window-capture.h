@@ -1,9 +1,6 @@
-/* obs-xdg-portal.c
+/* window-capture.h
  *
- * Copyright 2019 Georges Basile Stavracas Neto <georges.stavracas@gmail.com>
- *
- * Parts of this code were inspired by obs-gnome-mutter-screencast from
- * Florian Zwoch <fzwoch@gmail.com>.
+ * Copyright 2020 Georges Basile Stavracas Neto <georges.stavracas@gmail.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,18 +18,6 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include "desktop-capture.h"
-#include "pipewire.h"
-#include "window-capture.h"
+#pragma once
 
-OBS_DECLARE_MODULE()
-
-bool obs_module_load (void)
-{
-  desktop_capture_register_source ();
-  window_capture_register_source ();
-
-  obs_pipewire_load ();
-
-  return true;
-}
+void window_capture_register_source (void);

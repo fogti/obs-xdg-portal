@@ -4,6 +4,7 @@ sources = files(
   'desktop-capture.c',
   'obs-xdg-portal.c',
   'pipewire.c',
+  'window-capture.c',
 )
 
 shared_library('obs-xdg-portal',

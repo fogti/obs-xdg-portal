@@ -1,7 +1,12 @@
 project('obs-xdg-portal', 'c')
 
-shared_library('obs-xdg-portal',
+sources = files(
   'obs-xdg-portal.c',
+  'pipewire.c',
+)
+
+shared_library('obs-xdg-portal',
+  sources,
   name_prefix : '',
   dependencies : [
     dependency('libobs'),

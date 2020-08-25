@@ -1,6 +1,7 @@
 project('obs-xdg-portal', 'c')
 
 sources = files(
+  'desktop-capture.c',
   'obs-xdg-portal.c',
   'pipewire.c',
 )

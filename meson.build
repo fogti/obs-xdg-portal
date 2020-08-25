@@ -10,7 +10,7 @@ shared_library('obs-xdg-portal',
     dependency('gstreamer-1.0'),
     dependency('gstreamer-app-1.0'),
     dependency('gstreamer-video-1.0'),
-    dependency('xdg-desktop-portal),
+    dependency('xdg-desktop-portal'),
   ],
   install : true,
   install_dir : 'lib/obs-plugins'

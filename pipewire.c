@@ -210,6 +210,32 @@ teardown_pipewire (obs_pipewire_data *xdg)
   xdg->negotiated = false;
 }
 
+static void
+destroy_session (obs_pipewire_data *xdg)
+{
+  if (xdg->session_handle)
+    {
+      g_dbus_connection_call (xdg->connection,
+                              "org.freedesktop.portal.Desktop",
+                              xdg->session_handle,
+                              "org.freedesktop.portal.Session",
+                              "Close",
+                              NULL,
+                              NULL,
+                              G_DBUS_CALL_FLAGS_NONE,
+                              -1, NULL, NULL, NULL);
+
+      g_clear_pointer (&xdg->session_handle, g_free);
+    }
+
+  g_clear_pointer (&xdg->cursor.texture, gs_texture_destroy);
+  g_clear_pointer (&xdg->texture, gs_texture_destroy);
+  g_cancellable_cancel (xdg->cancellable);
+  g_clear_object (&xdg->cancellable);
+  g_clear_object (&xdg->connection);
+  g_clear_pointer (&xdg->sender_name, g_free);
+}
+
 static inline bool
 has_effective_crop (obs_pipewire_data *xdg)
 {
@@ -937,28 +963,8 @@ obs_pipewire_destroy (obs_pipewire_data *xdg)
     return;
 
   teardown_pipewire (xdg);
+  destroy_session (xdg);
 
-  if (xdg->session_handle)
-    {
-      g_dbus_connection_call (xdg->connection,
-                              "org.freedesktop.portal.Desktop",
-                              xdg->session_handle,
-                              "org.freedesktop.portal.Session",
-                              "Close",
-                              NULL,
-                              NULL,
-                              G_DBUS_CALL_FLAGS_NONE,
-                              -1, NULL, NULL, NULL);
-
-      g_clear_pointer (&xdg->session_handle, g_free);
-    }
-
-  g_clear_pointer (&xdg->cursor.texture, gs_texture_destroy);
-  g_clear_pointer (&xdg->texture, gs_texture_destroy);
-  g_cancellable_cancel (xdg->cancellable);
-  g_clear_object (&xdg->cancellable);
-  g_clear_object (&xdg->connection);
-  g_clear_pointer (&xdg->sender_name, g_free);
   g_free (xdg);
 }
 

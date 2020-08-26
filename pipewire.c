@@ -32,6 +32,10 @@
 #define REQUEST_PATH "/org/freedesktop/portal/desktop/request/%s/obs%u"
 #define SESSION_PATH "/org/freedesktop/portal/desktop/session/%s/obs%u"
 
+#define CURSOR_META_SIZE(width, height) \
+ (sizeof(struct spa_meta_cursor) + \
+  sizeof(struct spa_meta_bitmap) + width * height * 4)
+
 struct _obs_pipewire_data
 {
   GDBusConnection *connection;
@@ -65,6 +69,15 @@ struct _obs_pipewire_data
     int x, y;
     int width, height;
   } crop;
+
+  struct {
+    bool visible;
+    bool valid;
+    int x, y;
+    int hotspot_x, hotspot_y;
+    int width, height;
+    gs_texture_t *texture;
+  } cursor;
 
   obs_pw_capture_type capture_type;
   bool negotiated;
@@ -207,12 +220,39 @@ has_effective_crop (obs_pipewire_data *xdg)
           xdg->crop.height < xdg->format.info.raw.size.height);
 }
 
+static bool
+spa_pixel_format_to_obs_pixel_format (uint32_t              spa_format,
+                                      enum gs_color_format *out_format)
+{
+  switch (spa_format)
+    {
+    case SPA_VIDEO_FORMAT_RGBA:
+    case SPA_VIDEO_FORMAT_RGBx:
+      *out_format = GS_RGBA;
+      break;
+
+    case SPA_VIDEO_FORMAT_BGRA:
+      *out_format = GS_BGRA;
+      break;
+
+    case SPA_VIDEO_FORMAT_BGRx:
+      *out_format = GS_BGRX;
+      break;
+
+    default:
+      return false;
+    }
+
+  return true;
+}
+
 /* ------------------------------------------------- */
 
 static void
 on_process_cb (void *user_data)
 {
   obs_pipewire_data *xdg = user_data;
+  struct spa_meta_cursor *cursor;
   struct spa_meta_region *region;
   struct spa_buffer *buffer;
   struct pw_buffer *b;
@@ -241,8 +281,11 @@ on_process_cb (void *user_data)
 
   xdg->current_pw_buffer = b;
 
-  g_clear_pointer (&xdg->texture, gs_texture_destroy);
-  if (buffer->datas[0].type == SPA_DATA_DmaBuf)
+  if (buffer->datas[0].chunk->size == 0)
+    {
+      /* Do nothing; empty chunk means this is a metadata-only frame */
+    }
+  else if (buffer->datas[0].type == SPA_DATA_DmaBuf)
     {
       uint32_t offsets[1];
       uint32_t strides[1];
@@ -259,6 +302,7 @@ on_process_cb (void *user_data)
       offsets[0] = buffer->datas[0].chunk->offset;
       strides[0] = buffer->datas[0].chunk->stride;
 
+      g_clear_pointer (&xdg->texture, gs_texture_destroy);
       xdg->texture =
         gs_texture_create_from_dmabuf (xdg->format.info.raw.size.width,
                                        xdg->format.info.raw.size.height,
@@ -273,6 +317,7 @@ on_process_cb (void *user_data)
     {
       blog (LOG_DEBUG, "[pipewire] Buffer has memory texture");
 
+      g_clear_pointer (&xdg->texture, gs_texture_destroy);
       xdg->texture =
         gs_texture_create (xdg->format.info.raw.size.width,
                            xdg->format.info.raw.size.height,
@@ -303,6 +348,44 @@ on_process_cb (void *user_data)
       xdg->crop.valid = false;
     }
 
+  /* Cursor */
+  cursor = spa_buffer_find_meta_data (buffer, SPA_META_Cursor, sizeof (*cursor));
+  xdg->cursor.valid = cursor && spa_meta_cursor_is_valid (cursor);
+  if (xdg->cursor.visible && xdg->cursor.valid)
+    {
+      struct spa_meta_bitmap *bitmap = NULL;
+      enum gs_color_format format;
+
+      if (cursor->bitmap_offset)
+        bitmap = SPA_MEMBER (cursor, cursor->bitmap_offset, struct spa_meta_bitmap);
+
+      if (bitmap &&
+          bitmap->size.width > 0 &&
+          bitmap->size.height > 0 &&
+          spa_pixel_format_to_obs_pixel_format (bitmap->format, &format))
+        {
+          const uint8_t *bitmap_data;
+
+          bitmap_data = SPA_MEMBER (bitmap, bitmap->offset, uint8_t);
+          xdg->cursor.hotspot_x = cursor->hotspot.x;
+          xdg->cursor.hotspot_y = cursor->hotspot.y;
+          xdg->cursor.width = bitmap->size.width;
+          xdg->cursor.height = bitmap->size.height;
+
+          g_clear_pointer (&xdg->cursor.texture, gs_texture_destroy);
+          xdg->cursor.texture =
+            gs_texture_create (xdg->cursor.width,
+                               xdg->cursor.height,
+                               format,
+                               1,
+                               &bitmap_data,
+                               GS_DYNAMIC);
+        }
+
+      xdg->cursor.x = cursor->position.x;
+      xdg->cursor.y = cursor->position.y;
+    }
+
   obs_leave_graphics ();
 
   /*
@@ -318,7 +401,7 @@ on_param_changed_cb (void                 *user_data,
 {
   obs_pipewire_data *xdg = user_data;
   struct spa_pod_builder pod_builder;
-  const struct spa_pod *params[1];
+  const struct spa_pod *params[2];
   uint8_t params_buffer[1024];
   int result;
 
@@ -360,7 +443,16 @@ on_param_changed_cb (void                 *user_data,
 		SPA_PARAM_META_type, SPA_POD_Id (SPA_META_VideoCrop),
 		SPA_PARAM_META_size, SPA_POD_Int (sizeof (struct spa_meta_region)));
 
-  pw_stream_update_params (xdg->stream, params, 1);
+  /* Cursor */
+  params[1] = spa_pod_builder_add_object (
+    &pod_builder,
+    SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
+    SPA_PARAM_META_type, SPA_POD_Id (SPA_META_Cursor),
+    SPA_PARAM_META_size, SPA_POD_CHOICE_RANGE_Int (CURSOR_META_SIZE (64, 64),
+                                                   CURSOR_META_SIZE (1, 1),
+                                                   CURSOR_META_SIZE (1024, 1024)));
+
+  pw_stream_update_params (xdg->stream, params, 2);
 
   xdg->negotiated = true;
   pw_thread_loop_signal (xdg->thread_loop, FALSE);
@@ -690,7 +782,7 @@ select_source (obs_pipewire_data *xdg)
   g_variant_builder_init (&builder, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_add (&builder, "{sv}", "types", g_variant_new_uint32 (xdg->capture_type));
   g_variant_builder_add (&builder, "{sv}", "multiple", g_variant_new_boolean (FALSE));
-  g_variant_builder_add (&builder, "{sv}", "cursor_mode", g_variant_new_uint32 (2));
+  g_variant_builder_add (&builder, "{sv}", "cursor_mode", g_variant_new_uint32 (4));
   g_variant_builder_add (&builder, "{sv}", "handle_token", g_variant_new_string (request_token));
 
   g_dbus_connection_call (xdg->connection,
@@ -830,6 +922,7 @@ obs_pipewire_create (obs_pw_capture_type  capture_type,
   xdg->source = source;
   xdg->settings = settings;
   xdg->capture_type = capture_type;
+  xdg->cursor.visible = true;
 
   if (!init_obs_xdg (xdg))
     g_clear_pointer (&xdg, g_free);
@@ -860,6 +953,8 @@ obs_pipewire_destroy (obs_pipewire_data *xdg)
       g_clear_pointer (&xdg->session_handle, g_free);
     }
 
+  g_clear_pointer (&xdg->cursor.texture, gs_texture_destroy);
+  g_clear_pointer (&xdg->texture, gs_texture_destroy);
   g_cancellable_cancel (xdg->cancellable);
   g_clear_object (&xdg->cancellable);
   g_clear_object (&xdg->connection);
@@ -870,18 +965,25 @@ obs_pipewire_destroy (obs_pipewire_data *xdg)
 void
 obs_pipewire_get_defaults (obs_data_t *settings)
 {
+  obs_data_set_default_bool (settings, "ShowCursor", true);
 }
 
 obs_properties_t *
 obs_pipewire_get_properties (obs_pipewire_data *xdg)
 {
-  return NULL;
+  obs_properties_t *properties;
+
+  properties = obs_properties_create ();
+  obs_properties_add_bool (properties, "ShowCursor", "Show cursor");
+
+  return properties;
 }
 
 void
 obs_pipewire_update (obs_pipewire_data *xdg,
                      obs_data_t        *settings)
 {
+  xdg->cursor.visible = obs_data_get_bool (settings, "ShowCursor");
 }
 
 void
@@ -946,6 +1048,17 @@ obs_pipewire_video_render (obs_pipewire_data *xdg,
   else
     {
       gs_draw_sprite (xdg->texture, 0, 0, 0);
+    }
+
+  if (xdg->cursor.visible && xdg->cursor.valid && xdg->cursor.texture)
+    {
+      gs_matrix_push ();
+      gs_matrix_translate3f ((float)xdg->cursor.x, (float)xdg->cursor.y, 0.0f);
+
+      gs_effect_set_texture (image, xdg->cursor.texture);
+      gs_draw_sprite (xdg->texture, 0, xdg->cursor.width, xdg->cursor.height);
+
+      gs_matrix_pop ();
     }
 
   /* Now that the buffer is consumed, queue it again */

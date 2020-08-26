@@ -21,6 +21,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include <obs/obs-nix-platform.h>
+
 #include "desktop-capture.h"
 #include "pipewire.h"
 #include "window-capture.h"
@@ -30,6 +32,12 @@ OBS_MODULE_USE_DEFAULT_LOCALE("obs-xdg-portal", "en-US")
 
 bool obs_module_load (void)
 {
+  if (obs_get_nix_platform () == OBS_NIX_PLATFORM_X11_GLX)
+    {
+      blog (LOG_INFO, "obs-xdg-portal cannot run on X11/GLX, disabling…");
+      return false;
+    }
+
   desktop_capture_register_source ();
   window_capture_register_source ();
 

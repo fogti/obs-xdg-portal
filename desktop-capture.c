@@ -26,7 +26,7 @@
 static const char *
 desktop_capture_get_name (void *type_data)
 {
-  return "Desktop Screencast (Wayland / X11)";
+  return obs_module_text ("DesktopCapture");
 }
 
 static void *

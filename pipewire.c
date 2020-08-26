@@ -974,7 +974,7 @@ obs_pipewire_get_properties (obs_pipewire_data *xdg)
   obs_properties_t *properties;
 
   properties = obs_properties_create ();
-  obs_properties_add_bool (properties, "ShowCursor", "Show cursor");
+  obs_properties_add_bool (properties, "ShowCursor", obs_module_text ("ShowCursor"));
 
   return properties;
 }

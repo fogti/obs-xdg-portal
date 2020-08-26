@@ -26,6 +26,7 @@
 #include "window-capture.h"
 
 OBS_DECLARE_MODULE()
+OBS_MODULE_USE_DEFAULT_LOCALE("obs-xdg-portal", "en-US")
 
 bool obs_module_load (void)
 {

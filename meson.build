@@ -7,6 +7,9 @@ sources = files(
   'window-capture.c',
 )
 
+datadir = join_paths(get_option('datadir'), 'obs', 'obs-plugins', 'obs-xdg-portal')
+install_subdir('locale', install_dir: datadir)
+
 shared_library('obs-xdg-portal',
   sources,
   name_prefix : '',

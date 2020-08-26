@@ -26,7 +26,7 @@
 static const char *
 window_capture_get_name (void *type_data)
 {
-  return "Window Capture (Wayland / X11)";
+  return obs_module_text ("WindowCapture");
 }
 
 static void *

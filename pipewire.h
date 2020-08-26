@@ -38,7 +38,8 @@ void obs_pipewire_destroy (obs_pipewire_data *xdg);
 
 void obs_pipewire_get_defaults (obs_data_t *settings);
 
-obs_properties_t * obs_pipewire_get_properties (obs_pipewire_data *xdg);
+obs_properties_t * obs_pipewire_get_properties (obs_pipewire_data *xdg,
+                                                const char        *reload_string_id);
 
 void obs_pipewire_update (obs_pipewire_data *xdg,
                           obs_data_t        *settings);

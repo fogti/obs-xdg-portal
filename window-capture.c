@@ -51,7 +51,7 @@ window_capture_get_defaults (obs_data_t *settings)
 static obs_properties_t *
 window_capture_get_properties (void *data)
 {
-  return obs_pipewire_get_properties (data);
+  return obs_pipewire_get_properties (data, "SelectWindow");
 }
 
 static void

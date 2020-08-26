@@ -936,6 +936,21 @@ init_obs_xdg (obs_pipewire_data *xdg)
   return TRUE;
 }
 
+static bool
+reload_session_cb (obs_properties_t *properties,
+                   obs_property_t   *property,
+                   void             *data)
+{
+  obs_pipewire_data *xdg = data;
+
+  teardown_pipewire (xdg);
+  destroy_session (xdg);
+
+  init_obs_xdg (xdg);
+
+  return false;
+}
+
 /* obs_source_info methods */
 
 void*
@@ -975,11 +990,16 @@ obs_pipewire_get_defaults (obs_data_t *settings)
 }
 
 obs_properties_t *
-obs_pipewire_get_properties (obs_pipewire_data *xdg)
+obs_pipewire_get_properties (obs_pipewire_data *xdg,
+                             const char        *reload_string_id)
 {
   obs_properties_t *properties;
 
   properties = obs_properties_create ();
+  obs_properties_add_button2 (properties, "Reload",
+                              obs_module_text (reload_string_id),
+                              reload_session_cb,
+                              xdg);
   obs_properties_add_bool (properties, "ShowCursor", obs_module_text ("ShowCursor"));
 
   return properties;

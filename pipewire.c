@@ -279,9 +279,9 @@ on_process_cb (void *user_data)
 {
   obs_pipewire_data *xdg = user_data;
   struct spa_meta_cursor *cursor;
-  struct spa_meta_region *region;
   struct spa_buffer *buffer;
   struct pw_buffer *b;
+  bool has_buffer;
 
   /* Find the most recent buffer */
   b = NULL;
@@ -302,12 +302,13 @@ on_process_cb (void *user_data)
     }
 
   buffer = b->buffer;
+  has_buffer = buffer->datas[0].chunk->size != 0;
 
   obs_enter_graphics ();
 
   xdg->current_pw_buffer = b;
 
-  if (buffer->datas[0].chunk->size == 0)
+  if (!has_buffer)
     {
       /* Do nothing; empty chunk means this is a metadata-only frame */
     }
@@ -354,24 +355,29 @@ on_process_cb (void *user_data)
     }
 
   /* Video Crop */
-  region = spa_buffer_find_meta_data (buffer, SPA_META_VideoCrop, sizeof (*region));
-  if (region && spa_meta_region_is_valid (region))
+  if (has_buffer)
     {
-      blog (LOG_DEBUG, "[pipewire] Crop Region available (%dx%d+%d+%d)",
-            region->region.position.x,
-            region->region.position.y,
-            region->region.size.width,
-            region->region.size.height);
+      struct spa_meta_region *region;
 
-      xdg->crop.x = region->region.position.x;
-      xdg->crop.y = region->region.position.y;
-      xdg->crop.width = region->region.size.width;
-      xdg->crop.height = region->region.size.height;
-      xdg->crop.valid = true;
-    }
-  else
-    {
-      xdg->crop.valid = false;
+      region = spa_buffer_find_meta_data (buffer, SPA_META_VideoCrop, sizeof (*region));
+      if (region && spa_meta_region_is_valid (region))
+        {
+          blog (LOG_DEBUG, "[pipewire] Crop Region available (%dx%d+%d+%d)",
+                region->region.position.x,
+                region->region.position.y,
+                region->region.size.width,
+                region->region.size.height);
+
+          xdg->crop.x = region->region.position.x;
+          xdg->crop.y = region->region.position.y;
+          xdg->crop.width = region->region.size.width;
+          xdg->crop.height = region->region.size.height;
+          xdg->crop.valid = true;
+        }
+      else
+        {
+          xdg->crop.valid = false;
+        }
     }
 
   /* Cursor */

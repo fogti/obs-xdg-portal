@@ -279,6 +279,7 @@ on_process_cb (void *user_data)
 {
   obs_pipewire_data *xdg = user_data;
   struct spa_meta_cursor *cursor;
+  enum gs_color_format obs_format;
   struct spa_buffer *buffer;
   struct pw_buffer *b;
   bool has_buffer;
@@ -308,6 +309,8 @@ on_process_cb (void *user_data)
 
   xdg->current_pw_buffer = b;
 
+  spa_pixel_format_to_obs_pixel_format (xdg->format.info.raw.format,
+                                        &obs_format);
   if (!has_buffer)
     {
       /* Do nothing; empty chunk means this is a metadata-only frame */
@@ -333,7 +336,7 @@ on_process_cb (void *user_data)
       xdg->texture =
         gs_texture_create_from_dmabuf (xdg->format.info.raw.size.width,
                                        xdg->format.info.raw.size.height,
-                                       GS_BGRX,
+                                       obs_format,
                                        1,
                                        fds,
                                        strides,
@@ -348,7 +351,7 @@ on_process_cb (void *user_data)
       xdg->texture =
         gs_texture_create (xdg->format.info.raw.size.width,
                            xdg->format.info.raw.size.height,
-                           GS_BGRX,
+                           obs_format,
                            1,
                            (const uint8_t **)&buffer->datas[0].data,
                            GS_DYNAMIC);

@@ -20,10 +20,13 @@
 
 #include "pipewire.h"
 
+#include "utils.h"
+
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
 
 #include <fcntl.h>
+#include <linux/dma-buf.h>
 #include <pipewire/pipewire.h>
 #include <spa/param/video/format-utils.h>
 #include <spa/debug/types.h>
@@ -282,7 +285,9 @@ on_process_cb (void *user_data)
   enum gs_color_format obs_format;
   struct spa_buffer *buffer;
   struct pw_buffer *b;
+  bool dmabuf_creation_failed;
   bool has_buffer;
+  bool is_dmabuf;
 
   /* Find the most recent buffer */
   b = NULL;
@@ -312,10 +317,11 @@ on_process_cb (void *user_data)
   spa_pixel_format_to_obs_pixel_format (xdg->format.info.raw.format,
                                         &obs_format);
   if (!has_buffer)
-    {
-      /* Do nothing; empty chunk means this is a metadata-only frame */
-    }
-  else if (buffer->datas[0].type == SPA_DATA_DmaBuf)
+    goto read_metadata;
+
+  is_dmabuf = buffer->datas[0].type == SPA_DATA_DmaBuf;
+  dmabuf_creation_failed = false;
+  if (is_dmabuf)
     {
       uint32_t offsets[1];
       uint32_t strides[1];
@@ -342,10 +348,15 @@ on_process_cb (void *user_data)
                                        strides,
                                        offsets,
                                        NULL);
+      dmabuf_creation_failed = xdg->texture == NULL;
     }
-  else
+
+  if (!is_dmabuf || dmabuf_creation_failed)
     {
       blog (LOG_DEBUG, "[pipewire] Buffer has memory texture");
+
+      if (is_dmabuf)
+        sync_dma_buf (buffer->datas[0].fd, DMA_BUF_SYNC_START);
 
       g_clear_pointer (&xdg->texture, gs_texture_destroy);
       xdg->texture =
@@ -355,6 +366,9 @@ on_process_cb (void *user_data)
                            1,
                            (const uint8_t **)&buffer->datas[0].data,
                            GS_DYNAMIC);
+
+      if (is_dmabuf)
+        sync_dma_buf (buffer->datas[0].fd, DMA_BUF_SYNC_START);
     }
 
   /* Video Crop */
@@ -382,6 +396,8 @@ on_process_cb (void *user_data)
           xdg->crop.valid = false;
         }
     }
+
+read_metadata:
 
   /* Cursor */
   cursor = spa_buffer_find_meta_data (buffer, SPA_META_Cursor, sizeof (*cursor));

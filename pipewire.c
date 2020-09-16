@@ -509,9 +509,19 @@ on_param_changed_cb (void                 *user_data,
   pw_thread_loop_signal (xdg->thread_loop, FALSE);
 }
 
+static void
+on_state_changed_cb (void                 *user_data,
+                     enum pw_stream_state  old,
+                     enum pw_stream_state  state,
+                     const char           *error)
+{
+  blog (LOG_DEBUG, "[pipewire] stream state: \"%s\"\n", pw_stream_state_as_string (state));
+}
+
 static const struct pw_stream_events stream_events =
 {
   PW_VERSION_STREAM_EVENTS,
+  .state_changed = on_state_changed_cb,
   .param_changed = on_param_changed_cb,
   .process = on_process_cb,
 };

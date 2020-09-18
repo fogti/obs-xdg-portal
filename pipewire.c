@@ -506,7 +506,6 @@ on_param_changed_cb (void                 *user_data,
   pw_stream_update_params (xdg->stream, params, 2);
 
   xdg->negotiated = true;
-  pw_thread_loop_signal (xdg->thread_loop, FALSE);
 }
 
 static void
@@ -629,7 +628,6 @@ play_pipewire_stream (obs_pipewire_data *xdg)
 
   blog (LOG_INFO, "[OBS XDG] Starting monitor screencast…");
 
-  pw_thread_loop_wait (xdg->thread_loop);
   pw_thread_loop_unlock (xdg->thread_loop);
 }
 

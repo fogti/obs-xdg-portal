@@ -51,6 +51,8 @@ struct _obs_pipewire_data
   uint32_t         pipewire_node;
   int              pipewire_fd;
 
+  uint32_t         available_cursor_modes;
+
   obs_source_t    *source;
   obs_data_t      *settings;
 
@@ -839,6 +841,13 @@ select_source (obs_pipewire_data *xdg)
   g_variant_builder_add (&builder, "{sv}", "cursor_mode", g_variant_new_uint32 (4));
   g_variant_builder_add (&builder, "{sv}", "handle_token", g_variant_new_string (request_token));
 
+  if (xdg->available_cursor_modes & 4)
+    g_variant_builder_add (&builder, "{sv}", "cursor_mode", g_variant_new_uint32 (4));
+  else if ((xdg->available_cursor_modes & 2) && xdg->cursor.visible)
+    g_variant_builder_add (&builder, "{sv}", "cursor_mode", g_variant_new_uint32 (2));
+  else
+    g_variant_builder_add (&builder, "{sv}", "cursor_mode", g_variant_new_uint32 (1));
+
   g_dbus_proxy_call (xdg->proxy,
                      "SelectSources",
                      g_variant_new ("(oa{sv})", xdg->session_handle, &builder),
@@ -930,6 +939,26 @@ create_session (obs_pipewire_data *xdg)
 /* ------------------------------------------------- */
 
 static void
+update_available_cursor_modes (obs_pipewire_data *xdg)
+{
+  g_autoptr (GVariant) cached_cursor_modes = NULL;
+  uint32_t available_cursor_modes;
+
+  cached_cursor_modes = g_dbus_proxy_get_cached_property (xdg->proxy, "AvailableCursorModes");
+  available_cursor_modes = cached_cursor_modes ? g_variant_get_uint32 (cached_cursor_modes) : 0;
+
+  xdg->available_cursor_modes = available_cursor_modes;
+
+  blog (LOG_INFO, "[OBS XDG] Available cursor modes:");
+  if (available_cursor_modes & 4)
+    blog (LOG_INFO, "[OBS XDG]     - Metadata");
+  if (available_cursor_modes & 2)
+    blog (LOG_INFO, "[OBS XDG]     - Always visible");
+  if (available_cursor_modes & 1)
+    blog (LOG_INFO, "[OBS XDG]     - Hidden");
+}
+
+static void
 on_proxy_created_cb (GObject      *source,
                      GAsyncResult *res,
                      gpointer      user_data)
@@ -947,6 +976,7 @@ on_proxy_created_cb (GObject      *source,
       return;
     }
 
+  update_available_cursor_modes (xdg);
   create_session (xdg);
 }
 

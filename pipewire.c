@@ -42,6 +42,7 @@
 struct _obs_pipewire_data
 {
   GDBusConnection *connection;
+  GDBusProxy      *proxy;
   GCancellable    *cancellable;
 
   char            *sender_name;
@@ -236,6 +237,7 @@ destroy_session (obs_pipewire_data *xdg)
   g_cancellable_cancel (xdg->cancellable);
   g_clear_object (&xdg->cancellable);
   g_clear_object (&xdg->connection);
+  g_clear_object (&xdg->proxy);
   g_clear_pointer (&xdg->sender_name, g_free);
 }
 
@@ -644,10 +646,10 @@ on_pipewire_remote_opened_cb (GObject      *source,
   obs_pipewire_data *xdg = user_data;
   int fd_index;
 
-  result = g_dbus_connection_call_with_unix_fd_list_finish (G_DBUS_CONNECTION (source),
-                                                            &fd_list,
-                                                            res,
-                                                            &error);
+  result = g_dbus_proxy_call_with_unix_fd_list_finish (G_DBUS_PROXY (source),
+                                                       &fd_list,
+                                                       res,
+                                                       &error);
   if (error)
     {
       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
@@ -675,19 +677,15 @@ open_pipewire_remote (obs_pipewire_data *xdg)
 
   g_variant_builder_init (&builder, G_VARIANT_TYPE_VARDICT);
 
-  g_dbus_connection_call_with_unix_fd_list (xdg->connection,
-                                            "org.freedesktop.portal.Desktop",
-                                            "/org/freedesktop/portal/desktop",
-                                            "org.freedesktop.portal.ScreenCast",
-                                            "OpenPipeWireRemote",
-                                            g_variant_new ("(oa{sv})", xdg->session_handle, &builder),
-                                            NULL,
-                                            G_DBUS_CALL_FLAGS_NONE,
-                                            -1,
-                                            NULL,
-                                            xdg->cancellable,
-                                            on_pipewire_remote_opened_cb,
-                                            xdg);
+  g_dbus_proxy_call_with_unix_fd_list (xdg->proxy,
+                                       "OpenPipeWireRemote",
+                                       g_variant_new ("(oa{sv})", xdg->session_handle, &builder),
+                                       G_DBUS_CALL_FLAGS_NONE,
+                                       -1,
+                                       NULL,
+                                       xdg->cancellable,
+                                       on_pipewire_remote_opened_cb,
+                                       xdg);
 }
 
 /* ------------------------------------------------- */
@@ -739,7 +737,7 @@ on_started_cb (GObject      *source,
   g_autoptr (GVariant) result = NULL;
   g_autoptr (GError) error = NULL;
 
-  result = g_dbus_connection_call_finish (G_DBUS_CONNECTION (source), res, &error);
+  result = g_dbus_proxy_call_finish (G_DBUS_PROXY (source), res, &error);
   if (error)
     {
       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
@@ -765,18 +763,14 @@ start (obs_pipewire_data *xdg)
   g_variant_builder_init (&builder, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_add (&builder, "{sv}", "handle_token", g_variant_new_string (request_token));
 
-  g_dbus_connection_call (xdg->connection,
-                          "org.freedesktop.portal.Desktop",
-                          "/org/freedesktop/portal/desktop",
-                          "org.freedesktop.portal.ScreenCast",
-                          "Start",
-                          g_variant_new ("(osa{sv})", xdg->session_handle, "", &builder),
-                          NULL,
-                          G_DBUS_CALL_FLAGS_NONE,
-                          -1,
-                          xdg->cancellable,
-                          on_started_cb,
-                          call);
+  g_dbus_proxy_call (xdg->proxy,
+                     "Start",
+                     g_variant_new ("(osa{sv})", xdg->session_handle, "", &builder),
+                     G_DBUS_CALL_FLAGS_NONE,
+                     -1,
+                     xdg->cancellable,
+                     on_started_cb,
+                     call);
 }
 
 /* ------------------------------------------------- */
@@ -818,7 +812,7 @@ on_source_selected_cb (GObject      *source,
   g_autoptr (GVariant) result = NULL;
   g_autoptr (GError) error = NULL;
 
-  result = g_dbus_connection_call_finish (G_DBUS_CONNECTION (source), res, &error);
+  result = g_dbus_proxy_call_finish (G_DBUS_PROXY (source), res, &error);
   if (error)
     {
       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
@@ -845,18 +839,14 @@ select_source (obs_pipewire_data *xdg)
   g_variant_builder_add (&builder, "{sv}", "cursor_mode", g_variant_new_uint32 (4));
   g_variant_builder_add (&builder, "{sv}", "handle_token", g_variant_new_string (request_token));
 
-  g_dbus_connection_call (xdg->connection,
-                          "org.freedesktop.portal.Desktop",
-                          "/org/freedesktop/portal/desktop",
-                          "org.freedesktop.portal.ScreenCast",
-                          "SelectSources",
-                          g_variant_new ("(oa{sv})", xdg->session_handle, &builder),
-                          NULL,
-                          G_DBUS_CALL_FLAGS_NONE,
-                          -1,
-                          xdg->cancellable,
-                          on_source_selected_cb,
-                          call);
+  g_dbus_proxy_call (xdg->proxy,
+                     "SelectSources",
+                     g_variant_new ("(oa{sv})", xdg->session_handle, &builder),
+                     G_DBUS_CALL_FLAGS_NONE,
+                     -1,
+                     xdg->cancellable,
+                     on_source_selected_cb,
+                     call);
 }
 
 /* ------------------------------------------------- */
@@ -900,7 +890,7 @@ on_session_created_cb (GObject      *source,
   g_autoptr (GVariant) result = NULL;
   g_autoptr (GError) error = NULL;
 
-  result = g_dbus_connection_call_finish (G_DBUS_CONNECTION (source), res, &error);
+  result = g_dbus_proxy_call_finish (G_DBUS_PROXY (source), res, &error);
   if (error)
     {
       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
@@ -927,18 +917,51 @@ create_session (obs_pipewire_data *xdg)
   g_variant_builder_add (&builder, "{sv}", "handle_token", g_variant_new_string (request_token));
   g_variant_builder_add (&builder, "{sv}", "session_handle_token", g_variant_new_string (session_token));
 
-  g_dbus_connection_call (xdg->connection,
-                          "org.freedesktop.portal.Desktop",
-                          "/org/freedesktop/portal/desktop",
-                          "org.freedesktop.portal.ScreenCast",
-                          "CreateSession",
-                          g_variant_new ("(a{sv})", &builder),
-                          NULL,
-                          G_DBUS_CALL_FLAGS_NONE,
-                          -1,
-                          xdg->cancellable,
-                          on_session_created_cb,
-                          call);
+  g_dbus_proxy_call (xdg->proxy,
+                     "CreateSession",
+                     g_variant_new ("(a{sv})", &builder),
+                     G_DBUS_CALL_FLAGS_NONE,
+                     -1,
+                     xdg->cancellable,
+                     on_session_created_cb,
+                     call);
+}
+
+/* ------------------------------------------------- */
+
+static void
+on_proxy_created_cb (GObject      *source,
+                     GAsyncResult *res,
+                     gpointer      user_data)
+{
+  g_autoptr (GError) error = NULL;
+  obs_pipewire_data *xdg;
+
+  xdg = user_data;
+  xdg->proxy = g_dbus_proxy_new_finish (res, &error);
+
+  if (error)
+    {
+      if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        blog (LOG_ERROR, "[OBS XDG] Error creating proxy: %s", error->message);
+      return;
+    }
+
+  create_session (xdg);
+}
+
+static void
+create_proxy (obs_pipewire_data *xdg)
+{
+  g_dbus_proxy_new (xdg->connection,
+                    G_DBUS_PROXY_FLAGS_NONE,
+                    NULL,
+                    "org.freedesktop.portal.Desktop",
+                    "/org/freedesktop/portal/desktop",
+                    "org.freedesktop.portal.ScreenCast",
+                    xdg->cancellable,
+                    on_proxy_created_cb,
+                    xdg);
 }
 
 /* ------------------------------------------------- */
@@ -965,7 +988,7 @@ init_obs_xdg (obs_pipewire_data *xdg)
 
   blog (LOG_INFO, "OBS XDG initialized (sender name: %s)", xdg->sender_name);
 
-  create_session (xdg);
+  create_proxy (xdg);
 
   return TRUE;
 }

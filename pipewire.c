@@ -207,10 +207,12 @@ teardown_pipewire (obs_pipewire_data *xdg)
 {
   maybe_queue_buffer (xdg);
 
+  if (xdg->stream)
+    pw_stream_disconnect (xdg->stream);
+  g_clear_pointer (&xdg->stream, pw_stream_destroy);
+
   if (xdg->thread_loop)
     pw_thread_loop_stop (xdg->thread_loop);
-
-  g_clear_pointer (&xdg->stream, pw_stream_destroy);
   g_clear_pointer (&xdg->thread_loop, pw_thread_loop_destroy);
 
   xdg->negotiated = false;

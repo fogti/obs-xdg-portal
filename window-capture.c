@@ -37,7 +37,7 @@ window_capture_create (obs_data_t   *settings,
 }
 
 static void
-window_capture_destroy(void *data)
+window_capture_destroy (void *data)
 {
   obs_pipewire_destroy (data);
 }

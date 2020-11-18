@@ -1050,7 +1050,7 @@ obs_pipewire_create (obs_pw_capture_type  capture_type,
   xdg->source = source;
   xdg->settings = settings;
   xdg->capture_type = capture_type;
-  xdg->cursor.visible = true;
+  xdg->cursor.visible = obs_data_get_bool (settings, "ShowCursor");
 
   if (!init_obs_xdg (xdg))
     g_clear_pointer (&xdg, g_free);

@@ -332,6 +332,7 @@ on_process_cb (void *user_data)
     {
       uint32_t offsets[1];
       uint32_t strides[1];
+      uint64_t modifiers[1];
       int fds[1];
 
       blog (LOG_DEBUG, "[pipewire] DMA-BUF info: fd:%ld, stride:%d, offset:%u, size:%dx%d",
@@ -344,6 +345,7 @@ on_process_cb (void *user_data)
       fds[0] = buffer->datas[0].fd;
       offsets[0] = buffer->datas[0].chunk->offset;
       strides[0] = buffer->datas[0].chunk->stride;
+      modifiers[0] = xdg->format.info.raw.modifier;
 
       g_clear_pointer (&xdg->texture, gs_texture_destroy);
       xdg->texture =
@@ -354,7 +356,7 @@ on_process_cb (void *user_data)
                                        fds,
                                        strides,
                                        offsets,
-                                       NULL);
+                                       modifiers);
     }
   else
     {

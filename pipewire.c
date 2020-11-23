@@ -453,7 +453,7 @@ on_param_changed_cb (void                 *user_data,
 {
   obs_pipewire_data *xdg = user_data;
   struct spa_pod_builder pod_builder;
-  const struct spa_pod *params[2];
+  const struct spa_pod *params[3];
   uint8_t params_buffer[1024];
   int result;
 
@@ -504,7 +504,15 @@ on_param_changed_cb (void                 *user_data,
                                                    CURSOR_META_SIZE (1, 1),
                                                    CURSOR_META_SIZE (1024, 1024)));
 
-  pw_stream_update_params (xdg->stream, params, 2);
+  /* Buffer options */
+  params[2] = spa_pod_builder_add_object (
+    &pod_builder,
+    SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers,
+    SPA_PARAM_BUFFERS_dataType, SPA_POD_Int ((1 << SPA_DATA_MemPtr) |
+                                             (1 << SPA_DATA_MemFd) |
+                                             (1 << SPA_DATA_DmaBuf)));
+
+  pw_stream_update_params (xdg->stream, params, 3);
 
   xdg->negotiated = true;
 }

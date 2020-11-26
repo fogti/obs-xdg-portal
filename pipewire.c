@@ -291,9 +291,7 @@ on_process_cb (void *user_data)
   enum gs_color_format obs_format;
   struct spa_buffer *buffer;
   struct pw_buffer *b;
-  bool dmabuf_creation_failed;
   bool has_buffer;
-  bool is_dmabuf;
 
   /* Find the most recent buffer */
   b = NULL;
@@ -330,9 +328,7 @@ on_process_cb (void *user_data)
   if (!has_buffer)
     goto read_metadata;
 
-  is_dmabuf = buffer->datas[0].type == SPA_DATA_DmaBuf;
-  dmabuf_creation_failed = false;
-  if (is_dmabuf)
+  if (buffer->datas[0].type == SPA_DATA_DmaBuf)
     {
       uint32_t offsets[1];
       uint32_t strides[1];
@@ -359,15 +355,10 @@ on_process_cb (void *user_data)
                                        strides,
                                        offsets,
                                        NULL);
-      dmabuf_creation_failed = xdg->texture == NULL;
     }
-
-  if (!is_dmabuf || dmabuf_creation_failed)
+  else
     {
       blog (LOG_DEBUG, "[pipewire] Buffer has memory texture");
-
-      if (is_dmabuf)
-        sync_dma_buf (buffer->datas[0].fd, DMA_BUF_SYNC_START);
 
       g_clear_pointer (&xdg->texture, gs_texture_destroy);
       xdg->texture =
@@ -377,9 +368,6 @@ on_process_cb (void *user_data)
                            1,
                            (const uint8_t **)&buffer->datas[0].data,
                            GS_DYNAMIC);
-
-      if (is_dmabuf)
-        sync_dma_buf (buffer->datas[0].fd, DMA_BUF_SYNC_START);
     }
 
   /* Video Crop */

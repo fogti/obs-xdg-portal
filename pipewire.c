@@ -320,8 +320,13 @@ on_process_cb (void *user_data)
 
   xdg->current_pw_buffer = b;
 
-  spa_pixel_format_to_obs_pixel_format (xdg->format.info.raw.format,
-                                        &obs_format);
+  if (!spa_pixel_format_to_obs_pixel_format (xdg->format.info.raw.format,
+                                             &obs_format))
+    {
+      blog (LOG_ERROR, "[pipewire] unsupported buffer format: %d", xdg->format.info.raw.format);
+      goto read_metadata;
+    }
+
   if (!has_buffer)
     goto read_metadata;
 

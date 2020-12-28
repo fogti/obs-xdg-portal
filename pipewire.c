@@ -20,8 +20,6 @@
 
 #include "pipewire.h"
 
-#include "utils.h"
-
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
 

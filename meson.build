@@ -4,7 +4,6 @@ sources = files(
   'desktop-capture.c',
   'obs-xdg-portal.c',
   'pipewire.c',
-  'utils.c',
   'window-capture.c',
 )
 

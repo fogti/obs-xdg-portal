@@ -349,6 +349,7 @@ on_process_cb (void *user_data)
       xdg->texture =
         gs_texture_create_from_dmabuf (xdg->format.info.raw.size.width,
                                        xdg->format.info.raw.size.height,
+                                       xdg->format.info.raw.format,
                                        obs_format,
                                        1,
                                        fds,

@@ -22,5 +22,5 @@ shared_library('obs-xdg-portal',
     dependency('xdg-desktop-portal'),
   ],
   install : true,
-  install_dir : 'lib/obs-plugins'
+  install_dir : join_paths(get_option('libdir'), 'obs-plugins'),
 )

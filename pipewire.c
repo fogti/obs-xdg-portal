@@ -219,6 +219,8 @@ teardown_pipewire (obs_pipewire_data *xdg)
 static void
 destroy_session (obs_pipewire_data *xdg)
 {
+  close(xdg->pipewire_fd);
+
   if (xdg->session_handle)
     {
       g_dbus_connection_call (xdg->connection,
@@ -1002,6 +1004,7 @@ init_obs_xdg (obs_pipewire_data *xdg)
   g_autoptr (GError) error = NULL;
   char *aux;
 
+  xdg->pipewire_fd = -1;
   xdg->cancellable = g_cancellable_new ();
   xdg->connection = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, &error);
   if (error)
